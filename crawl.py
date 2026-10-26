@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # ///
-import argparse, json, os, io, glob, zipfile, time, threading, random, urllib.request, urllib.error, concurrent.futures as cf
+import argparse, json, os, sys, io, glob, zipfile, time, threading, random, urllib.request, urllib.error, concurrent.futures as cf
 
 import base_dados
 
@@ -13,8 +13,10 @@ WORKERS = int(os.environ.get("WORKERS", "24"))
 
 
 class Limiter:
+    """Limita a taxa. Cai 30% a cada reclamação do servidor e sobe 15% a cada 300 respostas boas, até o `RPS` pedido."""
+
     def __init__(self, rps):
-        self.rps, self.lock, self.next = rps, threading.Lock(), time.monotonic()
+        self.rps, self.teto, self.bons, self.lock, self.next = rps, rps, 0, threading.Lock(), time.monotonic()
 
     def wait(self):
         with self.lock:
@@ -26,9 +28,18 @@ class Limiter:
 
     def slow(self):
         with self.lock:
-            self.rps = max(2, self.rps * 0.7)
+            self.rps, self.bons = max(2, self.rps * 0.7), 0
             self.next = time.monotonic() + 30
         log(f"backoff: rps={self.rps:.1f}")
+
+    def ok(self):
+        with self.lock:
+            self.bons += 1
+            if self.bons < 300 or self.rps >= self.teto:
+                return
+            self.rps, self.bons = min(self.teto, self.rps * 1.15), 0
+            novo = self.rps
+        log(f"recuperando: rps={novo:.1f}")
 
 
 lim = Limiter(RPS)
@@ -45,7 +56,9 @@ def get(url):
         lim.wait()
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            return urllib.request.urlopen(req, timeout=60).read()
+            dados = urllib.request.urlopen(req, timeout=60).read()
+            lim.ok()
+            return dados
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 raise
@@ -169,6 +182,7 @@ def main():
         base_dados.preparar_refazer(DIR, ufs)
     if a.publicado:
         base_dados.baixar(a.publicado, DIR, set(a.ufs) or None, log)
+    excecoes = 0
     with cf.ThreadPoolExecutor(WORKERS) as ex:
         for uf in ufs:
             path = os.path.join(DIR, f"{uf}.jsonl")
@@ -194,12 +208,16 @@ def main():
                     except Exception as e:
                         mu, nm, zo, se = futs[fu]
                         r = {"uf": uf, "cd_mun": mu, "municipio": nm, "zona": zo, "secao": se, "erro": f"excecao {e}"}
+                    excecoes += str(r.get("erro", "")).startswith("excecao")
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
                     if i % 2000 == 0:
                         f.flush()
                         log(f"{uf}: {i}/{len(falta)} ({i / (time.time() - t0):.1f} seç/s)")
             log(f"{uf}: concluído")
+    if excecoes:
+        log(f"{excecoes} seções falharam por rede ou servidor; rode de novo para refazê-las (coletar.sh faz isso sozinho)")
+    return excecoes
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(3 if main() else 0)

@@ -85,9 +85,11 @@ São ~1 milhão de requisições e a coleta leva de 14 a 22 horas, então há tr
 | refazer | `crawl.py --refazer [rj sp]` | baixa tudo de novo do TSE; o arquivo antigo vira `{uf}.jsonl.anterior`, nada é apagado |
 | publicado | `crawl.py --publicado URL_DO_MANIFESTO` | baixa a base já coletada (`.jsonl.gz` por UF), confere o sha256 do arquivo e do conteúdo, e depois completa o que faltar |
 
+Para deixar rodando sem supervisão (por exemplo à noite), use `OUT_DIR=/pasta bash coletar.sh [--refazer] [ufs]`: ele repete o crawler até uma passada terminar sem falhas de rede, servidor ou disco (espera um disco externo voltar, se desconectar) e mantém o Mac acordado com `caffeinate`. O `--refazer` só vale na primeira passada. O crawler sai com código 3 se sobrou alguma seção com falha, e o limitador volta a subir a taxa sozinho depois de um período sem reclamações do servidor.
+
 Quem coleta pode publicar a base com `crawl.py --empacotar DESTINO`, que gera os `.jsonl.gz` e o `MANIFESTO.json` com tamanho e sha256. A base (~1,8 GB, ~480 MB comprimida) não vai no histórico do git: fica num Release, e o manifesto aponta para ela. Uma UF que já existe na pasta é mantida em `--publicado`.
 
-O crawler limita a taxa (`RPS`, padrão 10 req/s; cai sozinho se o servidor reclamar) e retoma de onde parou. Pasta de saída em `OUT_DIR`. Cada linha guarda, para os dois turnos, a abertura, o fechamento, o total de votos e, por voto a partir das 14h locais, a hora e a ociosidade da urna. Testes: `python3 -m unittest test_parse test_base_dados`.
+O crawler limita a taxa (`RPS`, padrão 10 req/s; cai sozinho se o servidor reclamar) e retoma de onde parou. Pasta de saída em `OUT_DIR`. Cada linha guarda, para os dois turnos, a abertura, o fechamento, o total de votos e, por voto a partir das 14h locais, a hora e a ociosidade da urna. Testes: `python3 -m unittest test_parse test_base_dados test_limiter`.
 
 ## Arquivos
 
