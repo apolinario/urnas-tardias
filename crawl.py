@@ -57,23 +57,64 @@ def get(url):
     raise RuntimeError(f"falhou: {url}")
 
 
+TURNOS = {"04/10/2026": "t1", "25/10/2026": "t2"}
+JANELA = 14 * 3600  # hora local da urna a partir da qual se guarda cada voto (cobre 16h de Brasília no Acre)
+
+
+def seg(t):
+    h, m, s = map(int, t.split(":"))
+    return h * 3600 + m * 60 + s
+
+
+def novo_turno():
+    return {"pronta": [], "ini_enc": [], "enc": [], "n": 0, "bio": 0, "hist": [0] * 48, "v": []}
+
+
 def parse(raw):
+    """Um dicionário por turno (t1 = 04/10, t2 = 25/10), horários locais da urna.
+
+    `v` traz um item por voto a partir de JANELA: [hora do voto, ociosidade, identificador->habilitação,
+    habilitação->voto], em segundos (-1 se faltou evento). Ociosidade é o tempo entre a urna ficar livre
+    ("Aguardando digitação do identificador") e o mesário digitar o eleitor seguinte.
+    """
     z = zipfile.ZipFile(io.BytesIO(raw))
-    r = {"arquivos": z.namelist(), "pronta": [], "encerramento": [], "votos_tarde": [], "votos": 0, "modelo": None}
+    r = {"arquivos": z.namelist(), "modelo": None, "t1": novo_turno(), "t2": novo_turno(), "fora": 0}
+    est = {k: {} for k in TURNOS.values()}
     for nm in z.namelist():
         for line in z.read(nm).decode("latin1").splitlines():
             p = line.split("\t")
-            if len(p) < 5 or not p[0].startswith("25/10/2026"):
+            if len(p) < 5:
                 continue
-            t, ev = p[0][11:], p[4]
-            if ev == "O voto do eleitor foi computado":
-                r["votos"] += 1
-                if t >= "13:00:00":
-                    r["votos_tarde"].append(t)
+            ev = p[4]
+            k = TURNOS.get(p[0][:10])
+            if k is None:
+                r["fora"] += ev == "O voto do eleitor foi computado"
+                continue
+            T, e, hora = r[k], est[k], p[0][11:]
+            if ev == "Aguardando digitação do identificador do eleitor":
+                e.setdefault("w", seg(hora))
+            elif ev == "Identificador do eleitor digitado pelo mesário":
+                e.setdefault("id", seg(hora))
+            elif ev == "Eleitor foi habilitado":
+                e["hab"] = seg(hora)
+            elif ev == "Tipo de habilitação do eleitor [biométrica]":
+                e["bio"] = 1
+            elif ev == "O voto do eleitor foi computado":
+                t = seg(hora)
+                T["n"] += 1
+                T["bio"] += e.get("bio", 0)
+                T["hist"][min(t // 1800, 47)] += 1
+                if t >= JANELA:
+                    w, i, h = e.get("w"), e.get("id"), e.get("hab")
+                    T["v"].append([t, i - w if w is not None and i is not None else -1,
+                                   h - i if h is not None and i is not None else -1, t - h if h is not None else -1])
+                est[k] = {}
             elif ev == "Urna pronta para receber votos":
-                r["pronta"].append(t)
+                T["pronta"].append(hora)
+            elif ev == "Inicio do Encerramento":
+                T["ini_enc"].append(hora)
             elif ev == "Procedimento de encerramento confirmado":
-                r["encerramento"].append(t)
+                T["enc"].append(hora)
             elif ev.startswith("Identificação do Modelo de Urna"):
                 r["modelo"] = ev.split(":")[-1].strip()
     return r
@@ -90,17 +131,21 @@ def secao(uf, mu, nm, zo, se):
     hs = aux.get("hashes", [])
     if not hs:
         return {**out, "erro": "sem hashes"}
-    h = hs[-1]
-    out["hash_st"], out["recebido"] = h.get("st"), h.get("hr")
-    lg = [a["nm"] for a in h.get("arq", []) if a.get("tp") == "log"]
-    if not lg:
-        return {**out, "erro": "sem log", "tipos": [a.get("tp") for a in h.get("arq", [])]}
-    try:
-        return {**out, **parse(get(f"{d}/{h['hash']}/{lg[0]}"))}
-    except urllib.error.HTTPError as e:
-        return {**out, "erro": f"log {e.code}"}
-    except zipfile.BadZipFile:
-        return {**out, "erro": "zip invalido"}
+    out["n_hashes"], out["logs"] = len(hs), []
+    for h in hs:
+        lg = [a["nm"] for a in h.get("arq", []) if a.get("tp") == "log"]
+        if not lg:
+            out["logs"].append({"hash_st": h.get("st"), "recebido": h.get("hr"), "sem_log": [a.get("tp") for a in h.get("arq", [])]})
+            continue
+        try:
+            out["logs"].append({"hash_st": h.get("st"), "recebido": h.get("hr"), **parse(get(f"{d}/{h['hash']}/{lg[0]}"))})
+        except urllib.error.HTTPError as e:
+            return {**out, "erro": f"log {e.code}"}
+        except zipfile.BadZipFile:
+            return {**out, "erro": "zip invalido"}
+    if not any("t2" in l for l in out["logs"]):
+        return {**out, "erro": "sem log"}
+    return out
 
 
 def main():
