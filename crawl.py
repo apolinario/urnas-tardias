@@ -1,7 +1,9 @@
 # /// script
 # requires-python = ">=3.10"
 # ///
-import json, sys, os, io, glob, zipfile, time, threading, random, urllib.request, urllib.error, concurrent.futures as cf
+import argparse, json, os, sys, io, glob, zipfile, time, threading, random, urllib.request, urllib.error, concurrent.futures as cf
+
+import base_dados
 
 BASE = "https://resultados.tse.jus.br/oficial/ele2026/arquivo-urna/3221"
 DIR = os.environ.get("OUT_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "dados")
@@ -11,8 +13,10 @@ WORKERS = int(os.environ.get("WORKERS", "24"))
 
 
 class Limiter:
+    """Limita a taxa. Cai 30% a cada reclamação do servidor e sobe 15% a cada 300 respostas boas, até o `RPS` pedido."""
+
     def __init__(self, rps):
-        self.rps, self.lock, self.next = rps, threading.Lock(), time.monotonic()
+        self.rps, self.teto, self.bons, self.lock, self.next = rps, rps, 0, threading.Lock(), time.monotonic()
 
     def wait(self):
         with self.lock:
@@ -24,9 +28,18 @@ class Limiter:
 
     def slow(self):
         with self.lock:
-            self.rps = max(2, self.rps * 0.7)
+            self.rps, self.bons = max(2, self.rps * 0.7), 0
             self.next = time.monotonic() + 30
         log(f"backoff: rps={self.rps:.1f}")
+
+    def ok(self):
+        with self.lock:
+            self.bons += 1
+            if self.bons < 300 or self.rps >= self.teto:
+                return
+            self.rps, self.bons = min(self.teto, self.rps * 1.15), 0
+            novo = self.rps
+        log(f"recuperando: rps={novo:.1f}")
 
 
 lim = Limiter(RPS)
@@ -43,7 +56,9 @@ def get(url):
         lim.wait()
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            return urllib.request.urlopen(req, timeout=60).read()
+            dados = urllib.request.urlopen(req, timeout=60).read()
+            lim.ok()
+            return dados
         except urllib.error.HTTPError as e:
             if e.code == 404:
                 raise
@@ -57,23 +72,64 @@ def get(url):
     raise RuntimeError(f"falhou: {url}")
 
 
+TURNOS = {"04/10/2026": "t1", "25/10/2026": "t2"}
+JANELA = 14 * 3600  # hora local da urna a partir da qual se guarda cada voto (cobre 16h de Brasília no Acre)
+
+
+def seg(t):
+    h, m, s = map(int, t.split(":"))
+    return h * 3600 + m * 60 + s
+
+
+def novo_turno():
+    return {"pronta": [], "ini_enc": [], "enc": [], "n": 0, "bio": 0, "hist": [0] * 48, "v": []}
+
+
 def parse(raw):
+    """Um dicionário por turno (t1 = 04/10, t2 = 25/10), horários locais da urna.
+
+    `v` traz um item por voto a partir de JANELA: [hora do voto, ociosidade, identificador->habilitação,
+    habilitação->voto], em segundos (-1 se faltou evento). Ociosidade é o tempo entre a urna ficar livre
+    ("Aguardando digitação do identificador") e o mesário digitar o eleitor seguinte.
+    """
     z = zipfile.ZipFile(io.BytesIO(raw))
-    r = {"arquivos": z.namelist(), "pronta": [], "encerramento": [], "votos_tarde": [], "votos": 0, "modelo": None}
+    r = {"arquivos": z.namelist(), "modelo": None, "t1": novo_turno(), "t2": novo_turno(), "fora": 0}
+    est = {k: {} for k in TURNOS.values()}
     for nm in z.namelist():
         for line in z.read(nm).decode("latin1").splitlines():
             p = line.split("\t")
-            if len(p) < 5 or not p[0].startswith("25/10/2026"):
+            if len(p) < 5:
                 continue
-            t, ev = p[0][11:], p[4]
-            if ev == "O voto do eleitor foi computado":
-                r["votos"] += 1
-                if t >= "13:00:00":
-                    r["votos_tarde"].append(t)
+            ev = p[4]
+            k = TURNOS.get(p[0][:10])
+            if k is None:
+                r["fora"] += ev == "O voto do eleitor foi computado"
+                continue
+            T, e, hora = r[k], est[k], p[0][11:]
+            if ev == "Aguardando digitação do identificador do eleitor":
+                e.setdefault("w", seg(hora))
+            elif ev == "Identificador do eleitor digitado pelo mesário":
+                e.setdefault("id", seg(hora))
+            elif ev == "Eleitor foi habilitado":
+                e["hab"] = seg(hora)
+            elif ev == "Tipo de habilitação do eleitor [biométrica]":
+                e["bio"] = 1
+            elif ev == "O voto do eleitor foi computado":
+                t = seg(hora)
+                T["n"] += 1
+                T["bio"] += e.get("bio", 0)
+                T["hist"][min(t // 1800, 47)] += 1
+                if t >= JANELA:
+                    w, i, h = e.get("w"), e.get("id"), e.get("hab")
+                    T["v"].append([t, i - w if w is not None and i is not None else -1,
+                                   h - i if h is not None and i is not None else -1, t - h if h is not None else -1])
+                est[k] = {}
             elif ev == "Urna pronta para receber votos":
-                r["pronta"].append(t)
+                T["pronta"].append(hora)
+            elif ev == "Inicio do Encerramento":
+                T["ini_enc"].append(hora)
             elif ev == "Procedimento de encerramento confirmado":
-                r["encerramento"].append(t)
+                T["enc"].append(hora)
             elif ev.startswith("Identificação do Modelo de Urna"):
                 r["modelo"] = ev.split(":")[-1].strip()
     return r
@@ -90,22 +146,43 @@ def secao(uf, mu, nm, zo, se):
     hs = aux.get("hashes", [])
     if not hs:
         return {**out, "erro": "sem hashes"}
-    h = hs[-1]
-    out["hash_st"], out["recebido"] = h.get("st"), h.get("hr")
-    lg = [a["nm"] for a in h.get("arq", []) if a.get("tp") == "log"]
-    if not lg:
-        return {**out, "erro": "sem log", "tipos": [a.get("tp") for a in h.get("arq", [])]}
-    try:
-        return {**out, **parse(get(f"{d}/{h['hash']}/{lg[0]}"))}
-    except urllib.error.HTTPError as e:
-        return {**out, "erro": f"log {e.code}"}
-    except zipfile.BadZipFile:
-        return {**out, "erro": "zip invalido"}
+    out["n_hashes"], out["logs"] = len(hs), []
+    for h in hs:
+        lg = [a["nm"] for a in h.get("arq", []) if a.get("tp") == "log"]
+        if not lg:
+            out["logs"].append({"hash_st": h.get("st"), "recebido": h.get("hr"), "sem_log": [a.get("tp") for a in h.get("arq", [])]})
+            continue
+        try:
+            out["logs"].append({"hash_st": h.get("st"), "recebido": h.get("hr"), **parse(get(f"{d}/{h['hash']}/{lg[0]}"))})
+        except urllib.error.HTTPError as e:
+            return {**out, "erro": f"log {e.code}"}
+        except zipfile.BadZipFile:
+            return {**out, "erro": "zip invalido"}
+    if not any("t2" in l for l in out["logs"]):
+        return {**out, "erro": "sem log"}
+    return out
 
 
 def main():
-    ufs = sys.argv[1:] or UFS
+    ap = argparse.ArgumentParser(description="Coleta os logs das urnas. Sem flags, reaproveita o que já está em OUT_DIR e baixa só o que falta.")
+    ap.add_argument("ufs", nargs="*", help="UFs em minúsculas (padrão: todas)")
+    ap.add_argument("--refazer", action="store_true", help="baixa tudo de novo do TSE (o arquivo antigo vira .anterior)")
+    ap.add_argument("--publicado", metavar="MANIFESTO", help="antes de coletar, baixa a base publicada (URL ou caminho do MANIFESTO.json) e confere o sha256")
+    ap.add_argument("--empacotar", metavar="DESTINO", help="só gera os .jsonl.gz e o MANIFESTO.json de OUT_DIR em DESTINO")
+    a = ap.parse_args()
+    if a.refazer and a.publicado:
+        ap.error("--refazer e --publicado não combinam")
+    if a.empacotar:
+        for nome, m in base_dados.empacotar(DIR, a.empacotar).items():
+            log(f"{nome}: {m['bytes']} -> {m['bytes_gz']} bytes")
+        return
+    ufs = a.ufs or UFS
     os.makedirs(DIR, exist_ok=True)
+    if a.refazer:
+        base_dados.preparar_refazer(DIR, ufs)
+    if a.publicado:
+        base_dados.baixar(a.publicado, DIR, set(a.ufs) or None, log)
+    excecoes = 0
     with cf.ThreadPoolExecutor(WORKERS) as ex:
         for uf in ufs:
             path = os.path.join(DIR, f"{uf}.jsonl")
@@ -131,12 +208,16 @@ def main():
                     except Exception as e:
                         mu, nm, zo, se = futs[fu]
                         r = {"uf": uf, "cd_mun": mu, "municipio": nm, "zona": zo, "secao": se, "erro": f"excecao {e}"}
+                    excecoes += str(r.get("erro", "")).startswith("excecao")
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
                     if i % 2000 == 0:
                         f.flush()
                         log(f"{uf}: {i}/{len(falta)} ({i / (time.time() - t0):.1f} seç/s)")
             log(f"{uf}: concluído")
+    if excecoes:
+        log(f"{excecoes} seções falharam por rede ou servidor; rode de novo para refazê-las (coletar.sh faz isso sozinho)")
+    return excecoes
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(3 if main() else 0)

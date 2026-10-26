@@ -12,12 +12,24 @@ def hms(x):
     return f"{x // 3600:02d}:{x % 3600 // 60:02d}:{x % 60:02d}"
 
 
+def normaliza(r):
+    """Aceita o formato atual do crawl.py (logs por conjunto de arquivos, um dicionário por turno) e devolve o antigo."""
+    if "logs" not in r:
+        return r
+    r = dict(r)
+    lg = [l for l in r.pop("logs") if "t2" in l]
+    if lg:
+        t = lg[-1]["t2"]
+        r.update(pronta=t["pronta"], encerramento=t["enc"], votos=t["n"], votos_tarde=[hms(v[0]) for v in t["v"]])
+    return r
+
+
 linhas, porbuf = [], collections.defaultdict(collections.Counter)
 vistos = {}
 for path in sorted(glob.glob(f"{DIR}/dados/*.jsonl")):
     for l in open(path):
         try:
-            r = json.loads(l)
+            r = normaliza(json.loads(l))
         except json.JSONDecodeError:
             continue
         k = (r["uf"], r["cd_mun"], r["zona"], r["secao"])
