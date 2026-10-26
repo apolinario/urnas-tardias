@@ -4,6 +4,7 @@ import gzip, hashlib, json, os, pathlib, re, shutil, urllib.request
 MANIFESTO = "MANIFESTO.json"
 NOME = re.compile(r"[a-z]{2}\.jsonl")
 SHA = re.compile(r"[0-9a-f]{64}")
+MAX_BYTES = 4 << 30  # teto fixo por arquivo, independente do que o manifesto declarar
 
 
 def sha256(path):
@@ -47,7 +48,7 @@ def baixar(origem, pasta, ufs=None, log=print):
     for nome, m in sorted(man.items()):
         # o manifesto vem de uma URL: nada dele pode escolher caminho fora de `pasta`
         if not NOME.fullmatch(nome) or m.get("gz") != nome + ".gz" or not all(SHA.fullmatch(str(m.get(k))) for k in ("sha256", "sha256_gz")) \
-                or not isinstance(m.get("bytes"), int):
+                or type(m.get("bytes")) is not int or not 0 <= m["bytes"] <= MAX_BYTES:
             raise ValueError(f"entrada inválida no manifesto: {nome!r}")
         if ufs and nome[:-len(".jsonl")] not in ufs:
             continue
@@ -62,10 +63,10 @@ def baixar(origem, pasta, ufs=None, log=print):
             if sha256(tmp_gz) != m["sha256_gz"]:
                 raise ValueError(f"{nome}: sha256 do arquivo comprimido não confere")
             with gzip.open(tmp_gz, "rb") as src, open(tmp, "wb") as dst:
-                restante = m["bytes"]
-                for bloco in iter(lambda: src.read(min(1 << 20, restante + 1)), b""):
-                    restante -= len(bloco)
-                    if restante < 0:
+                total = 0
+                for bloco in iter(lambda: src.read(1 << 20), b""):
+                    total += len(bloco)
+                    if total > m["bytes"]:
                         raise ValueError(f"{nome}: conteúdo maior que o declarado no manifesto")
                     dst.write(bloco)
             if sha256(tmp) != m["sha256"]:

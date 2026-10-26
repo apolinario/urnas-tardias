@@ -71,6 +71,17 @@ class BaseDadosTest(unittest.TestCase):
         self.assertFalse((self.pub.parent / "fora.jsonl").exists())
         self.assertEqual(list(self.novo.iterdir()) if self.novo.exists() else [], [])
 
+    def test_tamanho_declarado_invalido_e_recusado(self):
+        with open(self.manifesto) as f:
+            man = json.load(f)
+        ok = man["arquivos"]["rj.jsonl"]
+        for ruim in (-1, True, 2.5, "10", base_dados.MAX_BYTES + 1):
+            with open(self.manifesto, "w") as f:
+                json.dump({"arquivos": {"rj.jsonl": {**ok, "bytes": ruim}}}, f)
+            with self.assertRaisesRegex(ValueError, "inválida", msg=repr(ruim)):
+                base_dados.baixar(self.manifesto, self.novo, log=lambda *_: None)
+        self.assertEqual(list(self.novo.iterdir()) if self.novo.exists() else [], [])
+
     def test_bomba_de_gzip_e_barrada_pelo_tamanho_declarado(self):
         with open(self.manifesto) as f:
             man = json.load(f)
