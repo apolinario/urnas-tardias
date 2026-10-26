@@ -38,18 +38,18 @@ Log de cada urna (`logd.dat`) de **ambos os turnos**, para todas as seções com
 - **Corte** `c` = 17:00:00 de Brasília.
 - **U (teto).** Votos computados com hora `≥ c`, em urnas do país, no 2º turno. Reproduz o número do método original. Inclui a fila legal, portanto **é um teto do efeito, nunca o efeito**.
 - **Ociosidade** de um voto: tempo entre a urna ficar livre ("Aguardando digitação do identificador") e o mesário digitar o eleitor seguinte. Inclui ~10 s de digitação, então ociosidade longa significa mesa vazia.
-- **L (piso).** Em cada urna, seja `k*` o primeiro voto cuja urna ficou livre em `t_espera ≥ c` e permaneceu ociosa mais de `g` segundos. `L` é o número de votos de `k*` em diante. São eleitores que chegaram a uma mesa vazia depois do corte, portanto não estavam na fila. É um **piso**: não conta quem chegou depois do corte e entrou numa fila que ainda existia.
+- **L (piso).** Em cada urna, seja `k*` o primeiro voto com ociosidade maior que `g` segundos e cuja digitação do identificador ocorreu pelo menos 15 s depois do corte (`t_id − 15 s ≥ c`; 15 s é o tempo típico de digitação). `L` é o número de votos de `k*` em diante. Com a urna livre e ninguém na mesa, o eleitor atendido chegou depois do corte e não estava na fila. É um **piso**: não conta quem chegou depois do corte e entrou numa fila que ainda existia.
 - **g** (limiar de ociosidade). Valor principal fixado a priori em **120 s**. Sensibilidade: 60, 300 e 600 s.
 
 ## 5. Estimadores
 
 **E1. Intervalo model-free `[L, U]`.** Soma nacional e por UF. É o resultado principal: não depende de modelo, só das definições acima.
 
-**E2. Controle negativo (placebo) no 1º turno.** O mesmo detector `L` aplicado ao 1º turno, onde não houve prorrogação e só a fila podia votar depois das 17h. Qualquer `L > 0` ali é falso positivo (ou descumprimento da regra) e mede a taxa de erro do detector. O piso do 2º turno é reportado **líquido** dessa taxa: `L − L_placebo × (urnas expostas / urnas do 1º turno)`, com o bruto ao lado.
+**E2. Controle negativo (placebo) no 1º turno.** O mesmo detector `L` aplicado ao 1º turno, onde não houve prorrogação e só a fila podia votar depois das 17h. Qualquer `L > 0` ali é falso positivo (ou descumprimento da regra) e mede a taxa de erro do detector. A taxa é `p = L₁ / N₁`, com `N` o número de urnas com algum voto depois do corte. O piso do 2º turno é reportado **líquido**: `L₂ − p × N₂`, com o bruto ao lado.
 
-**E3. Estimativa calibrada (secundária, modelo).** Ajustar no 1º turno uma regressão binomial negativa para os votos depois do corte por urna, com covariáveis medidas **antes** das 17h (votos entre 16h e 17h, fração de tempo ocioso entre 16h30 e 17h, urna ocupada às 16h55, total de votos, modelo da urna, efeito fixo de UF). Predizer a fila esperada de cada urna no 2º turno e estimar `E3 = Σ (observado − predito)`. Validação do modelo: erro de predição nas urnas do 2º turno que fecharam até 17h10 (não afetadas pela decisão). Se o erro de calibração agregado nessa validação passar de 25%, E3 **não** é reportado como estimativa, só como exploratório.
+**E3. Estimativa calibrada (secundária, modelo).** Ajustar no 1º turno uma regressão de Poisson (pseudo-verossimilhança, que estima bem a média mesmo com superdispersão; a incerteza vem do bootstrap) para os votos depois do corte por urna, com covariáveis medidas **antes** das 17h (votos entre 16h e 17h, fração de tempo ocioso entre 16h30 e 17h, urna ocupada às 16h55, total de votos, modelo da urna, efeito fixo de UF). Predizer a fila esperada de cada urna no 2º turno e estimar `E3 = Σ (observado − predito)`. Validação do modelo: metade dos municípios do 1º turno (sorteio com a semente abaixo) fica de fora do ajuste, e compara-se o total observado com o predito nela, no total e por decil de predição. Se o erro agregado passar de 25%, E3 **não** é reportado como estimativa, só como exploratório. Como verificação secundária, o mesmo cálculo nas urnas do 2º turno que fecharam até 17h10 é mostrado, mas fecharam cedo justamente por não terem fila, então espera-se predição acima do observado e isso **não** reprova o modelo. A bootstrap de E3 refaz o ajuste em 200 réplicas (as demais usam 2.000).
 
-**Incerteza.** Bootstrap por **município** (agrupa urnas que compartilham fila, local e mesários), 2.000 réplicas, semente 20261025, intervalo percentílico de 95%. Todos os totais vêm com intervalo.
+**Incerteza.** Bootstrap por **município** (agrupa urnas que compartilham fila, local e mesários), 2.000 réplicas, semente 20261025, intervalo percentílico de 95%. O resultado principal e os totais por UF vêm com intervalo. As análises de sensibilidade da seção 7 mostram a estimativa pontual.
 
 ## 6. Consequência para o resultado (P3)
 
@@ -96,3 +96,11 @@ python3 analise_reavaliacao.py <pasta>      # produz as tabelas deste protocolo
 ## Desvios
 
 Nenhum até o momento.
+
+### Esclarecimentos antes de rodar a análise
+
+Feitos em 26/10/2026, depois do commit inicial deste protocolo e antes de qualquer análise sobre a coleta nova, ao detalhar os estimadores: (1) definição de `L` com o tempo de digitação de 15 s; (2) fórmula do piso líquido com `p = L₁ / N₁`; (3) Poisson no lugar de binomial negativa e validação por municípios retidos do 1º turno, porque as urnas do 2º turno que fecharam cedo são selecionadas pelo próprio desfecho; (4) intervalos só no resultado principal e nos totais por UF.
+
+### Depuração do script
+
+O `analise_reavaliacao.py` foi executado em 26/10/2026 sobre uma coleta **parcial** (3.571 seções do RJ e Roraima) apenas para depurar o código. Nenhuma definição, limiar ou critério deste protocolo foi alterado depois de ver esses números. Nessa amostra parcial a validação de E3 não passou no critério de 25%; o critério foi mantido e o resultado será reportado como o protocolo manda quando a coleta completa terminar.
