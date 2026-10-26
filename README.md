@@ -35,6 +35,8 @@ Quantos votos entraram depois das 17h no 2º turno de 2026 (25/10), quando o STF
 
 Com corte às 17h entram todas as urnas, e a maior parte desses votos vem de eleitores que já estavam na fila às 17h, o que é permitido em qualquer eleição.
 
+**Leitura correta dos números:** "votos depois das 17h" inclui a fila legal, então é um **teto** do que a prorrogação pode ter adicionado, não uma medida do efeito. O desenho para separar fila de chegadas novas, com controle no 1º turno e intervalos de incerteza, está em [PROTOCOLO.md](PROTOCOLO.md).
+
 ## Método
 
 Os dados vêm do log de cada urna (`logd.dat`), publicado pelo TSE em `resultados.tse.jus.br`. Exemplo com a seção 0517 da zona 0009 do Rio de Janeiro (código do município 60011):
@@ -60,7 +62,9 @@ Para cada seção, usamos só as linhas de 25/10/2026:
 - **encerramento**: evento "Procedimento de encerramento confirmado"
 - **votos**: evento "O voto do eleitor foi computado"
 
-Os horários do log são locais. O fuso de cada município é o mais comum entre as horas de abertura das suas urnas (abertura às 8h locais), e tudo é convertido para o horário de Brasília.
+Os horários do log são os do relógio local da urna. A votação abre às 8h de Brasília em todo o país, o que dá 6h no Acre, 7h na maior parte do Amazonas, em MT, MS, RO e RR, e 9h em Fernando de Noronha (Res. TSE 23.751/2026). O fuso de cada município é então a diferença mais comum entre a hora de abertura das suas urnas e as 8h, e tudo é convertido para o horário de Brasília.
+
+A prorrogação do STF foi até as 19h **de Brasília** ("determino prorrogação por duas horas, até as 19h, horário de Brasília"), e os logs concordam: nenhuma urna do oeste fechou depois de 19:01:40 de Brasília, e as urnas de Noronha fecharam perto de 19h de Brasília (20h locais).
 
 Uma urna é **estendida** se encerrou depois das 17h45 de Brasília. Nelas, contam-se os votos computados depois das 17h. O exterior (`ZZ`) fica de fora porque lá a votação segue a hora local de cada país.
 
@@ -73,9 +77,10 @@ uv run crawl.py          # todas as UFs, ou: uv run crawl.py rj sp
 python3 analisa.py       # gera secoes.csv e municipios.csv
 ```
 
-O crawler limita a taxa (`RPS`, padrão 10 req/s) e retoma de onde parou. São ~1 milhão de requisições; numa conexão doméstica leva horas.
+O crawler limita a taxa (`RPS`, padrão 10 req/s) e retoma de onde parou. Pasta de saída em `OUT_DIR`. Cada linha guarda, para os dois turnos, a abertura, o fechamento, o total de votos e, por voto a partir das 14h locais, a hora e a ociosidade da urna. `python3 -m unittest test_parse` testa o parser. São ~1 milhão de requisições; numa conexão doméstica leva horas.
 
 ## Arquivos
 
 - `secoes.csv`: uma linha por urna (fuso, abertura, encerramento, último voto, votos depois das 17h e das 17h20, total de votos, classe)
 - `municipios.csv`: municípios com urnas estendidas
+- `PROTOCOLO.md`: protocolo de reavaliação (perguntas, estimadores, controles e regras de relato)
