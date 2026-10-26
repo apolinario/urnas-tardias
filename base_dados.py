@@ -1,7 +1,9 @@
 """Empacota a pasta de coleta (um .jsonl por UF) e baixa uma base publicada, sempre conferindo sha256."""
-import gzip, hashlib, json, os, pathlib, shutil, urllib.request
+import gzip, hashlib, json, os, pathlib, re, shutil, urllib.request
 
 MANIFESTO = "MANIFESTO.json"
+NOME = re.compile(r"[a-z]{2}\.jsonl")
+SHA = re.compile(r"[0-9a-f]{64}")
 
 
 def sha256(path):
@@ -43,6 +45,10 @@ def baixar(origem, pasta, ufs=None, log=print):
         man = json.load(r)["arquivos"]
     os.makedirs(pasta, exist_ok=True)
     for nome, m in sorted(man.items()):
+        # o manifesto vem de uma URL: nada dele pode escolher caminho fora de `pasta`
+        if not NOME.fullmatch(nome) or m.get("gz") != nome + ".gz" or not all(SHA.fullmatch(str(m.get(k))) for k in ("sha256", "sha256_gz")) \
+                or not isinstance(m.get("bytes"), int):
+            raise ValueError(f"entrada inválida no manifesto: {nome!r}")
         if ufs and nome[:-len(".jsonl")] not in ufs:
             continue
         destino = os.path.join(pasta, nome)
@@ -56,7 +62,12 @@ def baixar(origem, pasta, ufs=None, log=print):
             if sha256(tmp_gz) != m["sha256_gz"]:
                 raise ValueError(f"{nome}: sha256 do arquivo comprimido não confere")
             with gzip.open(tmp_gz, "rb") as src, open(tmp, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+                restante = m["bytes"]
+                for bloco in iter(lambda: src.read(min(1 << 20, restante + 1)), b""):
+                    restante -= len(bloco)
+                    if restante < 0:
+                        raise ValueError(f"{nome}: conteúdo maior que o declarado no manifesto")
+                    dst.write(bloco)
             if sha256(tmp) != m["sha256"]:
                 raise ValueError(f"{nome}: sha256 do conteúdo não confere")
             os.replace(tmp, destino)

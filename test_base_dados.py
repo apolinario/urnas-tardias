@@ -55,6 +55,35 @@ class BaseDadosTest(unittest.TestCase):
             base_dados.baixar(self.manifesto, self.novo, log=lambda *_: None)
         self.assertFalse((self.novo / "rj.jsonl").exists())
 
+    def test_manifesto_malicioso_nao_escreve_fora_da_pasta(self):
+        with open(self.manifesto) as f:
+            man = json.load(f)
+        ok = man["arquivos"]["rj.jsonl"]
+        for nome, gz in (("../fora.jsonl", "../fora.jsonl.gz"), ("rj.jsonl", "../rj.jsonl.gz"), ("/tmp/x.jsonl", "/tmp/x.jsonl.gz")):
+            with open(self.manifesto, "w") as f:
+                json.dump({"arquivos": {nome: {**ok, "gz": gz}}}, f)
+            with self.assertRaisesRegex(ValueError, "inválida"):
+                base_dados.baixar(self.manifesto, self.novo, log=lambda *_: None)
+        with open(self.manifesto, "w") as f:
+            json.dump({"arquivos": {"rj.jsonl": {**ok, "sha256": "zz"}}}, f)
+        with self.assertRaisesRegex(ValueError, "inválida"):
+            base_dados.baixar(self.manifesto, self.novo, log=lambda *_: None)
+        self.assertFalse((self.pub.parent / "fora.jsonl").exists())
+        self.assertEqual(list(self.novo.iterdir()) if self.novo.exists() else [], [])
+
+    def test_bomba_de_gzip_e_barrada_pelo_tamanho_declarado(self):
+        with open(self.manifesto) as f:
+            man = json.load(f)
+        with gzip.open(self.pub / "rj.jsonl.gz", "wb") as f:
+            f.write(b"x" * 5000)
+        m = man["arquivos"]["rj.jsonl"]
+        m["sha256_gz"], m["bytes"] = base_dados.sha256(self.pub / "rj.jsonl.gz"), 100
+        with open(self.manifesto, "w") as f:
+            json.dump(man, f)
+        with self.assertRaisesRegex(ValueError, "maior"):
+            base_dados.baixar(self.manifesto, self.novo, log=lambda *_: None)
+        self.assertEqual([p.name for p in self.novo.iterdir()], ["ac.jsonl"])  # o arquivo válido anterior fica; o ruim e os temporários não
+
     def test_uf_ja_existente_e_mantida_e_filtro_de_uf(self):
         self.novo.mkdir()
         (self.novo / "ac.jsonl").write_text("local\n")

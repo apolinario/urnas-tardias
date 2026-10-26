@@ -24,7 +24,8 @@ A coleta completa faz ~1 milhão de requisições e leva de 14 a 22 horas. Quem 
 3. `--publicado URL_OU_MANIFESTO` baixa cada `{uf}.jsonl.gz`, confere o sha256 do arquivo comprimido, descomprime, confere o sha256 do conteúdo e **falha sem gravar** se algum não bater. Depois segue como `retomar`.
 4. `empacotar` e `--publicado` formam um ciclo: empacotar uma pasta e baixar o resultado (via `file://`) devolve arquivos idênticos byte a byte.
 5. Os modos podem ser limitados a UFs (`crawl.py --refazer rj sp`).
-6. Testes automatizados cobrem os critérios 2, 3 e 4 sem rede.
+6. O manifesto é entrada não confiável: nome fora de `[a-z]{2}.jsonl`, `gz` diferente de `nome.gz`, sha256 malformado ou conteúdo maior que o declarado abortam sem gravar fora da pasta.
+7. Testes automatizados cobrem os critérios 2, 3, 4 e 6 sem rede.
 
 ## Rastreabilidade
 
