@@ -1,7 +1,9 @@
 # /// script
 # requires-python = ">=3.10"
 # ///
-import json, sys, os, io, glob, zipfile, time, threading, random, urllib.request, urllib.error, concurrent.futures as cf
+import argparse, json, os, io, glob, zipfile, time, threading, random, urllib.request, urllib.error, concurrent.futures as cf
+
+import base_dados
 
 BASE = "https://resultados.tse.jus.br/oficial/ele2026/arquivo-urna/3221"
 DIR = os.environ.get("OUT_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "dados")
@@ -149,8 +151,24 @@ def secao(uf, mu, nm, zo, se):
 
 
 def main():
-    ufs = sys.argv[1:] or UFS
+    ap = argparse.ArgumentParser(description="Coleta os logs das urnas. Sem flags, reaproveita o que já está em OUT_DIR e baixa só o que falta.")
+    ap.add_argument("ufs", nargs="*", help="UFs em minúsculas (padrão: todas)")
+    ap.add_argument("--refazer", action="store_true", help="baixa tudo de novo do TSE (o arquivo antigo vira .anterior)")
+    ap.add_argument("--publicado", metavar="MANIFESTO", help="antes de coletar, baixa a base publicada (URL ou caminho do MANIFESTO.json) e confere o sha256")
+    ap.add_argument("--empacotar", metavar="DESTINO", help="só gera os .jsonl.gz e o MANIFESTO.json de OUT_DIR em DESTINO")
+    a = ap.parse_args()
+    if a.refazer and a.publicado:
+        ap.error("--refazer e --publicado não combinam")
+    if a.empacotar:
+        for nome, m in base_dados.empacotar(DIR, a.empacotar).items():
+            log(f"{nome}: {m['bytes']} -> {m['bytes_gz']} bytes")
+        return
+    ufs = a.ufs or UFS
     os.makedirs(DIR, exist_ok=True)
+    if a.refazer:
+        base_dados.preparar_refazer(DIR, ufs)
+    if a.publicado:
+        base_dados.baixar(a.publicado, DIR, set(a.ufs) or None, log)
     with cf.ThreadPoolExecutor(WORKERS) as ex:
         for uf in ufs:
             path = os.path.join(DIR, f"{uf}.jsonl")

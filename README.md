@@ -77,10 +77,21 @@ uv run crawl.py          # todas as UFs, ou: uv run crawl.py rj sp
 python3 analisa.py       # gera secoes.csv e municipios.csv
 ```
 
-O crawler limita a taxa (`RPS`, padrão 10 req/s) e retoma de onde parou. Pasta de saída em `OUT_DIR`. Cada linha guarda, para os dois turnos, a abertura, o fechamento, o total de votos e, por voto a partir das 14h locais, a hora e a ociosidade da urna. `python3 -m unittest test_parse` testa o parser. São ~1 milhão de requisições; numa conexão doméstica leva horas.
+São ~1 milhão de requisições e a coleta leva de 14 a 22 horas, então há três modos, à escolha de quem roda:
+
+| Modo | Comando | O que faz |
+|---|---|---|
+| retomar (padrão) | `crawl.py` | reaproveita o que já está em `OUT_DIR` e baixa só o que falta |
+| refazer | `crawl.py --refazer [rj sp]` | baixa tudo de novo do TSE; o arquivo antigo vira `{uf}.jsonl.anterior`, nada é apagado |
+| publicado | `crawl.py --publicado URL_DO_MANIFESTO` | baixa a base já coletada (`.jsonl.gz` por UF), confere o sha256 do arquivo e do conteúdo, e depois completa o que faltar |
+
+Quem coleta pode publicar a base com `crawl.py --empacotar DESTINO`, que gera os `.jsonl.gz` e o `MANIFESTO.json` com tamanho e sha256. A base (~1,8 GB, ~480 MB comprimida) não vai no histórico do git: fica num Release, e o manifesto aponta para ela. Uma UF que já existe na pasta é mantida em `--publicado`.
+
+O crawler limita a taxa (`RPS`, padrão 10 req/s; cai sozinho se o servidor reclamar) e retoma de onde parou. Pasta de saída em `OUT_DIR`. Cada linha guarda, para os dois turnos, a abertura, o fechamento, o total de votos e, por voto a partir das 14h locais, a hora e a ociosidade da urna. Testes: `python3 -m unittest test_parse test_base_dados`.
 
 ## Arquivos
 
 - `secoes.csv`: uma linha por urna (fuso, abertura, encerramento, último voto, votos depois das 17h e das 17h20, total de votos, classe)
 - `municipios.csv`: municípios com urnas estendidas
+- `base_dados.py`: empacota e baixa a base com conferência de sha256
 - `PROTOCOLO.md`: protocolo de reavaliação (perguntas, estimadores, controles e regras de relato)
