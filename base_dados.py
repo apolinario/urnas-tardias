@@ -20,6 +20,8 @@ def empacotar(pasta, destino):
     os.makedirs(destino, exist_ok=True)
     arquivos = {}
     for p in sorted(pathlib.Path(pasta).glob("*.jsonl")):
+        if p.name.startswith("."):  # ._x.jsonl: metadados que o macOS cria em volumes exFAT
+            continue
         gz = os.path.join(destino, p.name + ".gz")
         with open(p, "rb") as src, open(gz, "wb") as raw, gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=9, mtime=0) as dst:
             shutil.copyfileobj(src, dst)

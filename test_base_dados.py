@@ -28,6 +28,10 @@ class BaseDadosTest(unittest.TestCase):
         for nome in ("rj.jsonl", "ac.jsonl"):
             self.assertEqual((self.orig / nome).read_bytes(), (self.novo / nome).read_bytes())
 
+    def test_empacotar_ignora_arquivos_ocultos_do_macos(self):
+        (self.orig / "._rj.jsonl").write_bytes(b"\x00\x05\x16\x07 metadados")
+        self.assertEqual(sorted(base_dados.empacotar(self.orig, self.pub.parent / "pub3")), ["ac.jsonl", "rj.jsonl"])
+
     def test_empacotar_e_deterministico(self):
         a = base_dados.empacotar(self.orig, self.pub)
         b = base_dados.empacotar(self.orig, self.pub.parent / "pub2")
