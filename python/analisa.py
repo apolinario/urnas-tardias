@@ -1,6 +1,6 @@
-import json, glob, csv, collections, sys, os
+import json, glob, csv, collections, sys, os, urllib.request
 
-DIR = os.path.dirname(os.path.abspath(__file__))
+DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # raiz do repositório
 
 
 def seg(t):
@@ -12,12 +12,24 @@ def hms(x):
     return f"{x // 3600:02d}:{x % 3600 // 60:02d}:{x % 60:02d}"
 
 
+def normaliza(r):
+    """Aceita o formato atual do crawl.py (logs por conjunto de arquivos, um dicionário por turno) e devolve o antigo."""
+    if "logs" not in r:
+        return r
+    r = dict(r)
+    lg = [l for l in r.pop("logs") if "t2" in l]
+    if lg:
+        t = lg[-1]["t2"]
+        r.update(pronta=t["pronta"], encerramento=t["enc"], votos=t["n"], votos_tarde=[hms(v[0]) for v in t["v"]])
+    return r
+
+
 linhas, porbuf = [], collections.defaultdict(collections.Counter)
 vistos = {}
 for path in sorted(glob.glob(f"{DIR}/dados/*.jsonl")):
     for l in open(path):
         try:
-            r = json.loads(l)
+            r = normaliza(json.loads(l))
         except json.JSONDecodeError:
             continue
         k = (r["uf"], r["cd_mun"], r["zona"], r["secao"])
@@ -80,3 +92,31 @@ with open(f"{DIR}/municipios.csv", "w", newline="") as f:
     for (uf, nm), m in sorted(mun.items(), key=lambda kv: (-kv[1]["est"], kv[0])):
         if m["est"]:
             w.writerow([uf, nm, m["urnas"], m["est"], round(100 * m["est"] / m["urnas"], 1), m["est_c17"], m["est_v17"]])
+
+# Votos até e depois das 17h por município, lidos pelo app em app/assets/votos.json:
+# {uf: {cd_mun: [municipio, urnas, estendidas, votos até 17h, votos depois das 17h, votos depois das 17h nas estendidas]}}
+vm = collections.defaultdict(lambda: [None, 0, 0, 0, 0, 0])
+for x in linhas:
+    if x["uf"] == "ZZ":
+        continue
+    v, e = vm[(x["uf"], x["cd_mun"])], x["classe"] == "estendida"
+    v[0] = x["municipio"]
+    v[1] += 1
+    v[2] += e
+    v[3] += x["votos_total"] - x["votos_apos_17h"]
+    v[4] += x["votos_apos_17h"]
+    v[5] += x["votos_apos_17h"] if e else 0
+votos = collections.defaultdict(dict)
+for (uf, cd), v in sorted(vm.items(), key=lambda kv: (kv[0][0], kv[1][0])):
+    votos[uf][cd] = v
+with open(f"{DIR}/app/assets/votos.json", "w") as f:
+    json.dump(votos, f, ensure_ascii=False, separators=(",", ":"))
+
+# Números do card, lidos pelo app em app/assets/card.json
+RES = "https://resultados.tse.jus.br/oficial/ele2026/6258/dados/br/br-c0001-e006258-u.json"
+res = json.load(urllib.request.urlopen(urllib.request.Request(RES, headers={"User-Agent": "Mozilla/5.0"}), timeout=60))
+vap = sorted((int(c["vap"]) for a in res["carg"][0]["agr"] for p in a["par"] for c in p["cand"]), reverse=True)
+br = agg["BR"]
+with open(f"{DIR}/app/assets/card.json", "w") as f:
+    json.dump({"urnas": br["urnas"], "estendidas": br["est"], "votos_apos_17h": br["est_v17"],
+               "votos_total": sum(x["votos_total"] for x in linhas if x["uf"] != "ZZ"), "vantagem": vap[0] - vap[1]}, f, indent=2)
