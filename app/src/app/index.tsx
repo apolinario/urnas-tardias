@@ -21,6 +21,7 @@ const VERDE_ESCURO = "#16876F";
 const AZUL = "#2C3E50";
 const CINZA = "#5D6D7E";
 const LINHA = "#E3E6E8";
+const FILA = "#AEB6BF";
 const LIMAO = "#A3D911";
 const REPO = "github.com/leobragatti/urnas-tardias";
 
@@ -258,6 +259,61 @@ function Barra({
   );
 }
 
+// Separa os votos depois das 17h entre a fila das 17h e a prorrogação.
+function Divisao({ fila, prorrogacao }: { fila: number; prorrogacao: number }) {
+  const todo = fila + prorrogacao;
+  const partes = [
+    {
+      cor: FILA,
+      valor: fila,
+      titulo: "Fila das 17h",
+      texto:
+        "Urnas que fecharam no horário normal. São eleitores que já estavam na fila às 17h, o que é permitido em qualquer eleição.",
+    },
+    {
+      cor: VERDE_ESCURO,
+      valor: prorrogacao,
+      titulo: "Prorrogação",
+      texto:
+        "Urnas estendidas, que fecharam depois das 17h45 por causa da decisão do STF.",
+    },
+  ];
+  return (
+    <View style={s.divisao}>
+      <View style={s.divisaoBarra}>
+        {partes.map(
+          (p) =>
+            p.valor > 0 && (
+              <View
+                key={p.titulo}
+                style={{ flex: p.valor, minWidth: 4, backgroundColor: p.cor }}
+              />
+            ),
+        )}
+      </View>
+      {partes.map((p) => (
+        <View key={p.titulo} style={s.parte}>
+          <View style={[s.ponto, { backgroundColor: p.cor }]} />
+          <View style={s.rotulos}>
+            <Text style={s.parteTitulo}>{p.titulo}</Text>
+            <Text style={s.sub}>{p.texto}</Text>
+          </View>
+          <View style={s.parteNumeros}>
+            <Text
+              style={[
+                s.parteValor,
+                p.cor === VERDE_ESCURO && { color: VERDE_ESCURO },
+              ]}>
+              {int(p.valor)}
+            </Text>
+            <Text style={s.sub}>{pct(p.valor, todo, 0)}</Text>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export default function Card() {
   const { top, bottom } = useSafeAreaInsets();
   const [uf, setUf] = useState<string>();
@@ -356,12 +412,24 @@ export default function Card() {
           </View>
 
           <View style={[s.destaque, s.divisa]}>
-            <Text style={s.destaqueNumero}>{int(escolhido)}</Text>
+            <Text
+              style={[
+                s.destaqueNumero,
+                janela === "depois17" && { color: AZUL },
+              ]}>
+              {int(escolhido)}
+            </Text>
             <Text style={s.destaqueLegenda}>
               {info.legenda} · {lugar}
               {janela !== "total" &&
                 ` · ${pct(escolhido, total, janela === "ate17" ? 2 : 3)} do total`}
             </Text>
+            {janela === "depois17" && (
+              <Divisao
+                fila={r.depois17 - r.depois17Est}
+                prorrogacao={r.depois17Est}
+              />
+            )}
           </View>
 
           <Linha rotulo={uf ? "Urnas" : "Urnas no país"} valor={int(r.urnas)} />
@@ -373,7 +441,7 @@ export default function Card() {
             forte
           />
           <Linha
-            rotulo="Votos depois das 17h nessas urnas"
+            rotulo="Votos depois das 17h nas urnas estendidas"
             valor={int(r.depois17Est)}
             forte
           />
@@ -518,6 +586,25 @@ const s = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
     color: CINZA,
+  },
+  divisao: { marginTop: 14, gap: 14 },
+  divisaoBarra: {
+    flexDirection: "row",
+    height: 14,
+    borderRadius: 7,
+    overflow: "hidden",
+    gap: 2,
+    backgroundColor: LINHA,
+  },
+  parte: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  ponto: { width: 12, height: 12, borderRadius: 6, marginTop: 4 },
+  parteTitulo: { fontFamily: "Lato_700Bold", fontSize: 15, color: AZUL },
+  parteNumeros: { alignItems: "flex-end" },
+  parteValor: {
+    fontFamily: "Montserrat_800ExtraBold",
+    fontSize: 20,
+    color: AZUL,
+    fontVariant: ["tabular-nums"],
   },
 
   modal: { flex: 1, backgroundColor: "#FFFFFF", paddingHorizontal: 16 },
