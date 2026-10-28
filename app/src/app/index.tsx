@@ -106,6 +106,8 @@ function soma(linhas: Mun[]): Recorte {
   return r;
 }
 
+const BRASIL = soma(Object.values(VOTOS).flatMap((ms) => Object.values(ms)));
+
 const JANELAS = [
   { id: "ate17", nome: "Até 17h", legenda: "votos computados até as 17h" },
   {
@@ -289,20 +291,31 @@ function Barra({
   );
 }
 
-// Separa os votos depois das 17h entre a fila das 17h e a prorrogação.
-function Divisao({ fila, prorrogacao }: { fila: number; prorrogacao: number }) {
+// Separa os votos depois das 17h entre a fila das 17h e a prorrogação. No rodapé,
+// que tem fundo escuro nos dois temas, usa cores claras e compara com a vantagem.
+function Divisao({
+  fila,
+  prorrogacao,
+  vantagem,
+}: {
+  fila: number;
+  prorrogacao: number;
+  vantagem?: number;
+}) {
   const { c, s } = useTema();
+  const rodape = vantagem !== undefined;
   const todo = fila + prorrogacao;
+  const corProrrogacao = rodape ? LIMAO : c.realce;
   const partes = [
     {
-      cor: c.fila,
+      cor: rodape ? "#7F8C8D" : c.fila,
       valor: fila,
       titulo: "Fila das 17h",
       texto:
         "Urnas que fecharam no horário normal. São eleitores que já estavam na fila às 17h, o que é permitido em qualquer eleição.",
     },
     {
-      cor: c.realce,
+      cor: corProrrogacao,
       valor: prorrogacao,
       titulo: "Prorrogação",
       texto:
@@ -311,7 +324,9 @@ function Divisao({ fila, prorrogacao }: { fila: number; prorrogacao: number }) {
   ];
   return (
     <View style={s.divisao}>
-      <View style={s.divisaoBarra}>
+      <View
+        style={[s.divisaoBarra, rodape && { backgroundColor: c.rodapeLinha }]}
+      >
         {partes.map(
           (p) =>
             p.valor > 0 && (
@@ -326,16 +341,26 @@ function Divisao({ fila, prorrogacao }: { fila: number; prorrogacao: number }) {
         <View key={p.titulo} style={s.parte}>
           <View style={[s.ponto, { backgroundColor: p.cor }]} />
           <View style={s.rotulos}>
-            <Text style={s.parteTitulo}>{p.titulo}</Text>
-            <Text style={s.sub}>{p.texto}</Text>
+            <Text style={[s.parteTitulo, rodape && s.textoRodape]}>
+              {p.titulo}
+            </Text>
+            <Text style={[s.sub, rodape && s.subRodape]}>{p.texto}</Text>
           </View>
           <View style={s.parteNumeros}>
             <Text
-              style={[s.parteValor, p.cor === c.realce && { color: c.realce }]}
+              style={[
+                s.parteValor,
+                rodape && s.textoRodape,
+                p.cor === corProrrogacao && { color: corProrrogacao },
+              ]}
             >
               {int(p.valor)}
             </Text>
-            <Text style={s.sub}>{pct(p.valor, todo, 0)}</Text>
+            <Text style={[s.sub, rodape && s.subRodape]}>
+              {rodape
+                ? `${pct(p.valor, vantagem, 2)} da vantagem`
+                : pct(p.valor, todo, 0)}
+            </Text>
           </View>
         </View>
       ))}
@@ -525,11 +550,14 @@ function Conteudo({
               fracao={1}
               cor={VERDE}
             />
-            <Barra
-              rotulo="Votos depois das 17h nas urnas estendidas"
-              valor={card.votos_apos_17h}
-              fracao={card.votos_apos_17h / card.vantagem}
-              cor={LIMAO}
+            <View style={s.barraTopo}>
+              <Text style={s.barraRotulo}>Votos depois das 17h</Text>
+              <Text style={s.barraValor}>{int(BRASIL.depois17)}</Text>
+            </View>
+            <Divisao
+              fila={BRASIL.depois17 - BRASIL.depois17Est}
+              prorrogacao={BRASIL.depois17Est}
+              vantagem={card.vantagem}
             />
             <View style={s.fonte}>
               <Text style={s.fonteTitulo}>Fonte: TSE</Text>
@@ -790,6 +818,8 @@ function criaEstilos(c: Cores) {
       justifyContent: "center",
       boxShadow: "0 4px 12px rgba(0, 0, 0, 0.35)",
     },
+    textoRodape: { color: "#FFFFFF" },
+    subRodape: { color: "#AEB6BF" },
     fabIcone: { fontSize: 24, lineHeight: 28, color: "#FFFFFF" },
   });
 }
