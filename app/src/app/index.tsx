@@ -51,6 +51,7 @@ type Cores = typeof CLARO;
 const Tema = createContext({ c: CLARO, s: criaEstilos(CLARO) });
 const useTema = () => useContext(Tema);
 const REPO = "github.com/leobragatti/urnas-tardias";
+const DADOS = "https://drive.proton.me/urls/JA1QGKHMXC#o63Kx0NBdjaN";
 
 const ESTADOS: Record<string, string> = {
   AC: "Acre",
@@ -568,6 +569,15 @@ function Conteudo({
                 em urnas que não foram estendidas são de eleitores que já
                 estavam na fila às 17h.
               </Text>
+              <Text style={s.fonteTexto}>
+                Arquivos coletados:{" "}
+                <Text
+                  style={s.linkDiscreto}
+                  onPress={() => Linking.openURL(DADOS)}
+                >
+                  baixar do Proton Drive
+                </Text>
+              </Text>
               <Text
                 style={s.link}
                 onPress={() => Linking.openURL(`https://${REPO}`)}
@@ -807,6 +817,7 @@ function criaEstilos(c: Cores) {
       color: "#AEB6BF",
     },
     link: { fontFamily: "Montserrat_800ExtraBold", fontSize: 15, color: LIMAO },
+    linkDiscreto: { textDecorationLine: "underline" },
     fab: {
       position: "absolute",
       right: 20,
